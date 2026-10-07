@@ -152,13 +152,15 @@ class CallkitIncomingBroadcastReceiver : BroadcastReceiver() {
             )
         }
         try {
-            CallkitConnectionService.pendingIncoming = data
+            CallkitConnectionService.pendingIncoming.add(parsed.id, data)
             telecom.addNewIncomingCall(handle, extras)
             Log.d(TAG, "Telecom addNewIncomingCall id=${parsed.id}")
         } catch (e: SecurityException) {
             Log.w(TAG, "Telecom addNewIncomingCall rejected: ${e.message}")
+            CallkitConnectionService.pendingIncoming.remove(parsed.id)
         } catch (e: Exception) {
             Log.w(TAG, "Telecom addNewIncomingCall error: ${e.message}")
+            CallkitConnectionService.pendingIncoming.remove(parsed.id)
         }
     }
 
@@ -201,13 +203,15 @@ class CallkitIncomingBroadcastReceiver : BroadcastReceiver() {
         }
         val address = parsed.handle.ifEmpty { parsed.id }
         try {
-            CallkitConnectionService.pendingOutgoing = data
+            CallkitConnectionService.pendingOutgoing.add(parsed.id, data)
             telecom.placeCall(Uri.fromParts("tel", address, null), extras)
             Log.d(TAG, "Telecom placeCall id=${parsed.id}")
         } catch (e: SecurityException) {
             Log.w(TAG, "Telecom placeCall rejected: ${e.message}")
+            CallkitConnectionService.pendingOutgoing.remove(parsed.id)
         } catch (e: Exception) {
             Log.w(TAG, "Telecom placeCall error: ${e.message}")
+            CallkitConnectionService.pendingOutgoing.remove(parsed.id)
         }
     }
 

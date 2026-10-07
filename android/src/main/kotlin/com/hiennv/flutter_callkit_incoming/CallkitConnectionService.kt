@@ -40,15 +40,15 @@ class CallkitConnectionService : ConnectionService() {
         private const val TAG = "CallkitConnectionSvc"
 
         /**
-         * The last call handed to Telecom each way, until its connection is
-         * created. A refused request no longer carries the call's extras (seen
-         * on Android 10), so this is how the refusal finds its call.
+         * The calls handed to Telecom each way, oldest first, until their
+         * connection is created or refused. A refused request no longer
+         * carries the call's extras (seen on Android 10), so this is how the
+         * refusal finds its call: Telecom answers requests in order, so it is
+         * the oldest one still waiting.
          */
-        @Volatile
-        var pendingIncoming: Bundle? = null
+        val pendingIncoming = PendingCalls()
 
-        @Volatile
-        var pendingOutgoing: Bundle? = null
+        val pendingOutgoing = PendingCalls()
     }
 
     override fun onCreateIncomingConnection(
@@ -68,7 +68,7 @@ class CallkitConnectionService : ConnectionService() {
         }
 
         Log.d(TAG, "onCreateIncomingConnection id=$callId caller=${data.nameCaller}")
-        if (pendingIncoming?.let { Data.fromBundle(it).id } == callId) pendingIncoming = null
+        pendingIncoming.remove(callId)
 
         val connection = CallkitConnection(applicationContext, callId, callBundle).apply {
             if (data.nameCaller.isNotEmpty()) {
@@ -91,7 +91,6 @@ class CallkitConnectionService : ConnectionService() {
         super.onCreateIncomingConnectionFailed(connectionManagerPhoneAccount, request)
         Log.w(TAG, "onCreateIncomingConnectionFailed")
         refused(request, pendingIncoming)
-        pendingIncoming = null
     }
 
     override fun onCreateOutgoingConnection(
@@ -111,7 +110,7 @@ class CallkitConnectionService : ConnectionService() {
         }
 
         Log.d(TAG, "onCreateOutgoingConnection id=$callId callee=${data.nameCaller}")
-        if (pendingOutgoing?.let { Data.fromBundle(it).id } == callId) pendingOutgoing = null
+        pendingOutgoing.remove(callId)
 
         val connection = CallkitConnection(applicationContext, callId, callBundle).apply {
             if (data.nameCaller.isNotEmpty()) {
@@ -134,7 +133,6 @@ class CallkitConnectionService : ConnectionService() {
         super.onCreateOutgoingConnectionFailed(connectionManagerPhoneAccount, request)
         Log.w(TAG, "onCreateOutgoingConnectionFailed")
         refused(request, pendingOutgoing)
-        pendingOutgoing = null
     }
 
     private fun extractCallBundle(extras: Bundle?): Bundle? {
@@ -155,8 +153,9 @@ class CallkitConnectionService : ConnectionService() {
      * held for an outgoing one). The plugin's own notification would ring on
      * and the app would carry on with the call: end the UI and tell the app.
      */
-    private fun refused(request: ConnectionRequest?, pending: Bundle?) {
-        val data = extractCallBundle(request?.extras) ?: pending ?: run {
+    private fun refused(request: ConnectionRequest?, pending: PendingCalls) {
+        val named = extractCallBundle(request?.extras)
+        val data = named?.also { pending.remove(Data.fromBundle(it).id) } ?: pending.takeOldest() ?: run {
             Log.w(TAG, "refused: no call data")
             return
         }
@@ -170,4 +169,25 @@ class CallkitConnectionService : ConnectionService() {
             DisconnectCause(DisconnectCause.ERROR, reason),
         )
     }
+}
+
+/** Calls waiting for Telecom's answer, oldest first, by id. */
+class PendingCalls {
+    private val calls = LinkedHashMap<String, Bundle>()
+
+    @Synchronized
+    fun add(id: String, data: Bundle) {
+        calls.remove(id)
+        calls[id] = data
+        // Never more than a few in flight; never grows without end.
+        while (calls.size > 8) calls.remove(calls.keys.first())
+    }
+
+    @Synchronized
+    fun remove(id: String) {
+        calls.remove(id)
+    }
+
+    @Synchronized
+    fun takeOldest(): Bundle? = calls.keys.firstOrNull()?.let { calls.remove(it) }
 }
